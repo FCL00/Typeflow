@@ -3,6 +3,10 @@
 A minimalist, typing speed test application built to help users improve their typing speed, accuracy, and consistency. Featuring a distraction-free interface, customizable themes, real-time typing statistics, and a keyboard-focused experience.
 
 <p align="center">
+  <img src="./public/typeflow.png" alt="typeflow preview"></img>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/React-2026?style=for-the-badge&logo=react&logoColor=61DAFB&labelColor=20232A&color=20232A" alt="React"></img>
   <img src="https://img.shields.io/badge/TypeScript-blue?style=for-the-badge&logo=typescript&logoColor=white" alt="Typescript"></img>
   <img src="https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="Tailwindcss"></img>
