@@ -43,7 +43,7 @@ export const HistoryStatsView: React.FC<HistoryStatsViewProps> = ({
       const remMins = mins % 60;
       return `${hours}h ${remMins}m`;
     }
-    return `${mins}m ${secs}s`;
+    return `${mins}m ${secs.toFixed(1)}s`;
   };
 
   return (
