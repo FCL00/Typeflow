@@ -27,6 +27,7 @@ import {
   calculateRawWpm,
   calculateAccuracy,
   calculateConsistency,
+  calculateCharacterStats,
 } from './utils/calculateStats';
 import {
   loadUserSettings,
@@ -73,24 +74,117 @@ export default function App() {
   const [liveAcc, setLiveAcc] = useState<number>(100);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
 
-  // Refs for real-time tracking
+  // Refs for real-time tracking (authoritative ground truth to eliminate stale closures)
   const startTimeRef = useRef<number | null>(null);
+  const endTimeRef = useRef<number | null>(null);
   const timelineRef = useRef<TimelineDataPoint[]>([]);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const totalKeystrokesRef = useRef<number>(0);
-  const correctKeystrokesRef = useRef<number>(0);
   const wordsRef = useRef<WordItem[]>([]);
-  wordsRef.current = words;
+  const currentWordIndexRef = useRef<number>(0);
+  const currentInputRef = useRef<string>('');
+  const isTestActiveRef = useRef<boolean>(false);
+  const isCompletedRef = useRef<boolean>(false);
+  const configRef = useRef<TestConfig>(config);
+  configRef.current = config;
+  const quoteInfoRef = useRef<{ text: string; author: string } | undefined>(undefined);
+  const finishTestRef = useRef<() => void>(() => {});
+
+  // Finish Test Helper (authoritative completion calculation)
+  const finishTest = useCallback(() => {
+    if (isCompletedRef.current) return;
+    isCompletedRef.current = true;
+    isTestActiveRef.current = false;
+
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+
+    const currentConfig = configRef.current;
+    const now = Date.now();
+    endTimeRef.current = now;
+
+    let duration: number;
+    if (currentConfig.mode === 'time') {
+      duration = currentConfig.timeDuration;
+    } else {
+      const elapsed = startTimeRef.current ? (now - startTimeRef.current) / 1000 : 1;
+      duration = Math.max(0.5, Math.round(elapsed * 10) / 10);
+    }
+
+    // Ground-truth character state evaluation across all words
+    const currentWords = wordsRef.current;
+    const currentIdx = currentWordIndexRef.current;
+    const stats = calculateCharacterStats(currentWords, currentIdx);
+
+    const totalKeystrokes = Math.max(stats.totalCharacters, totalKeystrokesRef.current);
+    const finalWpm = calculateNetWpm(stats.totalCorrect, duration);
+    const finalRawWpm = calculateRawWpm(totalKeystrokes, duration);
+    const finalAcc = calculateAccuracy(stats.totalCorrect, totalKeystrokes);
+    const finalConsistency = calculateConsistency(timelineRef.current);
+
+    let configSummary = '';
+    if (currentConfig.mode === 'time') {
+      configSummary = `time ${currentConfig.timeDuration}s`;
+    } else if (currentConfig.mode === 'words') {
+      configSummary = `words ${currentConfig.wordCount}`;
+    } else {
+      configSummary = `quote ${currentConfig.quoteLength}`;
+    }
+    if (currentConfig.punctuation) configSummary += ' +punc';
+    if (currentConfig.numbers) configSummary += ' +num';
+
+    const result: TestResult = {
+      id: `test_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: Date.now(),
+      wpm: finalWpm,
+      rawWpm: finalRawWpm,
+      accuracy: finalAcc,
+      consistency: finalConsistency,
+      durationSeconds: duration,
+      mode: currentConfig.mode,
+      configSummary,
+      quoteAuthor: quoteInfoRef.current?.author,
+      characters: {
+        correct: stats.totalCorrect,
+        incorrect: stats.totalIncorrect,
+        extra: stats.extra,
+        missed: stats.missed,
+        total: totalKeystrokes,
+      },
+      timeline: timelineRef.current,
+    };
+
+    const updatedHistory = saveTestResult(result);
+    setHistory(updatedHistory);
+    setTestResult(result);
+    setIsTestActive(false);
+    setIsCompleted(true);
+  }, []);
+
+  finishTestRef.current = finishTest;
 
   // Initialize a new test
   const initTest = useCallback((newConfig?: TestConfig) => {
-    const activeConfig = newConfig || config;
+    const activeConfig = newConfig || configRef.current;
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
 
     const generated = generateTestWords(activeConfig);
+    wordsRef.current = generated.words;
+    currentWordIndexRef.current = 0;
+    currentInputRef.current = '';
+    isTestActiveRef.current = false;
+    isCompletedRef.current = false;
+    startTimeRef.current = null;
+    endTimeRef.current = null;
+    totalKeystrokesRef.current = 0;
+    timelineRef.current = [];
+    quoteInfoRef.current = generated.quoteInfo;
+
     setWords(generated.words);
     setQuoteInfo(generated.quoteInfo);
     setCurrentWordIndex(0);
@@ -102,135 +196,65 @@ export default function App() {
     setLiveWpm(0);
     setLiveAcc(100);
     setTestResult(null);
-
-    startTimeRef.current = null;
-    timelineRef.current = [];
-    totalKeystrokesRef.current = 0;
-    correctKeystrokesRef.current = 0;
-  }, [config]);
+  }, []);
 
   // Initialize on mount
   useEffect(() => {
     initTest();
   }, [initTest]);
 
-  // Finish Test Helper
-  const finishTest = useCallback(() => {
+  // Start Test Timer
+  const startTestTimer = useCallback(() => {
+    if (isTestActiveRef.current || isCompletedRef.current) return;
+    startTimeRef.current = Date.now();
+    isTestActiveRef.current = true;
+    setIsTestActive(true);
+
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
 
-    const duration = config.mode === 'time'
-      ? config.timeDuration
-      : Math.max(1, elapsedSeconds);
-
-    // Calculate characters breakdown
-    let correctCount = 0;
-    let incorrectCount = 0;
-    let extraCount = 0;
-    let missedCount = 0;
-
-    wordsRef.current.forEach((word, idx) => {
-      if (idx <= currentWordIndex) {
-        word.letters.forEach(letter => {
-          if (letter.state === 'correct') correctCount++;
-          else if (letter.state === 'incorrect') incorrectCount++;
-          else if (letter.state === 'extra') extraCount++;
-          else if (letter.state === 'untyped') missedCount++;
-        });
-      }
-    });
-
-    const totalChars = correctCount + incorrectCount + extraCount;
-    const finalWpm = calculateNetWpm(correctCount, duration);
-    const finalRawWpm = calculateRawWpm(totalKeystrokesRef.current, duration);
-    const finalAcc = calculateAccuracy(correctCount, totalKeystrokesRef.current);
-    const finalConsistency = calculateConsistency(timelineRef.current);
-
-    let configSummary = '';
-    if (config.mode === 'time') {
-      configSummary = `time ${config.timeDuration}s`;
-    } else if (config.mode === 'words') {
-      configSummary = `words ${config.wordCount}`;
-    } else {
-      configSummary = `quote ${config.quoteLength}`;
-    }
-    if (config.punctuation) configSummary += ' +punc';
-    if (config.numbers) configSummary += ' +num';
-
-    const result: TestResult = {
-      id: `test_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      timestamp: Date.now(),
-      wpm: finalWpm,
-      rawWpm: finalRawWpm,
-      accuracy: finalAcc,
-      consistency: finalConsistency,
-      durationSeconds: duration,
-      mode: config.mode,
-      configSummary,
-      quoteAuthor: quoteInfo?.author,
-      characters: {
-        correct: correctCount,
-        incorrect: incorrectCount,
-        extra: extraCount,
-        missed: missedCount,
-        total: totalChars,
-      },
-      timeline: timelineRef.current,
-    };
-
-    const updatedHistory = saveTestResult(result);
-    setHistory(updatedHistory);
-    setTestResult(result);
-    setIsTestActive(false);
-    setIsCompleted(true);
-  }, [config, elapsedSeconds, currentWordIndex, quoteInfo]);
-
-  // Start Test Timer
-  const startTestTimer = useCallback(() => {
-    startTimeRef.current = Date.now();
-    setIsTestActive(true);
-
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-
     timerIntervalRef.current = setInterval(() => {
-      setElapsedSeconds(prevElapsed => {
-        const nextElapsed = prevElapsed + 1;
+      if (!startTimeRef.current || isCompletedRef.current) return;
 
-        // Current live values
-        const currentCorrect = correctKeystrokesRef.current;
-        const currentTotal = totalKeystrokesRef.current;
-        const currentWpm = calculateNetWpm(currentCorrect, nextElapsed);
-        const currentRawWpm = calculateRawWpm(currentTotal, nextElapsed);
-        const currentAcc = calculateAccuracy(currentCorrect, currentTotal);
+      const now = Date.now();
+      const currentElapsed = Math.max(1, Math.round((now - startTimeRef.current) / 1000));
+      setElapsedSeconds(currentElapsed);
 
-        setLiveWpm(currentWpm);
-        setLiveAcc(currentAcc);
+      const currentConfig = configRef.current;
 
-        // Record timeline point
-        timelineRef.current.push({
-          second: nextElapsed,
-          wpm: currentWpm,
-          rawWpm: currentRawWpm,
-          errors: currentTotal - currentCorrect,
-        });
-
-        // Time mode countdown
-        if (config.mode === 'time') {
-          setTimeLeft(prevTime => {
-            if (prevTime <= 1) {
-              finishTest();
-              return 0;
-            }
-            return prevTime - 1;
-          });
+      // Time mode countdown
+      if (currentConfig.mode === 'time') {
+        const remaining = Math.max(0, currentConfig.timeDuration - currentElapsed);
+        setTimeLeft(remaining);
+        if (remaining <= 0) {
+          finishTestRef.current();
+          return;
         }
+      }
 
-        return nextElapsed;
+      // Calculate live metrics using identical authoritative formula
+      const stats = calculateCharacterStats(
+        wordsRef.current,
+        currentWordIndexRef.current
+      );
+      const totalKeys = Math.max(stats.totalCharacters, totalKeystrokesRef.current);
+      const currentWpm = calculateNetWpm(stats.totalCorrect, currentElapsed);
+      const currentRawWpm = calculateRawWpm(totalKeys, currentElapsed);
+      const currentAcc = calculateAccuracy(stats.totalCorrect, totalKeys);
+
+      setLiveWpm(currentWpm);
+      setLiveAcc(currentAcc);
+
+      timelineRef.current.push({
+        second: currentElapsed,
+        wpm: currentWpm,
+        rawWpm: currentRawWpm,
+        errors: stats.totalIncorrect,
       });
     }, 1000);
-  }, [config.mode, finishTest]);
+  }, []);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -243,14 +267,15 @@ export default function App() {
 
   // Handle character input
   const handleInputChange = (newInput: string, key: string) => {
-    if (isCompleted) return;
+    if (isCompletedRef.current) return;
 
     // Start timer on first valid character
-    if (!isTestActive) {
+    if (!isTestActiveRef.current) {
       startTestTimer();
     }
 
-    const currentWord = words[currentWordIndex];
+    const currentIdx = currentWordIndexRef.current;
+    const currentWord = wordsRef.current[currentIdx];
     if (!currentWord) return;
 
     totalKeystrokesRef.current += 1;
@@ -262,11 +287,7 @@ export default function App() {
     if (charIndex < currentWord.original.length) {
       isCorrect = newInput[charIndex] === currentWord.original[charIndex];
     } else {
-      isCorrect = false; // extra character is considered incorrect
-    }
-
-    if (isCorrect) {
-      correctKeystrokesRef.current += 1;
+      isCorrect = false; // extra character
     }
 
     // Play feedback sound
@@ -297,31 +318,37 @@ export default function App() {
       }
     }
 
-    // Update words state
-    setWords(prevWords => {
-      const newWords = [...prevWords];
-      newWords[currentWordIndex] = {
-        ...currentWord,
-        letters: updatedLetters,
-        typed: newInput,
-        hasMistake: updatedLetters.some(l => l.state === 'incorrect' || l.state === 'extra'),
-      };
-      return newWords;
-    });
+    const updatedWord: WordItem = {
+      ...currentWord,
+      letters: updatedLetters,
+      typed: newInput,
+      hasMistake: updatedLetters.some(l => l.state === 'incorrect' || l.state === 'extra'),
+    };
 
+    const newWords = [...wordsRef.current];
+    newWords[currentIdx] = updatedWord;
+    wordsRef.current = newWords;
+    currentInputRef.current = newInput;
+
+    setWords(newWords);
     setCurrentInput(newInput);
 
-    // Update live metrics
-    const elapsed = Math.max(1, elapsedSeconds);
-    setLiveWpm(calculateNetWpm(correctKeystrokesRef.current, elapsed));
-    setLiveAcc(calculateAccuracy(correctKeystrokesRef.current, totalKeystrokesRef.current));
+    // Update live metrics immediately on keystroke
+    const elapsed = startTimeRef.current
+      ? Math.max(1, (Date.now() - startTimeRef.current) / 1000)
+      : 1;
+    const stats = calculateCharacterStats(newWords, currentIdx);
+    const totalKeys = Math.max(stats.totalCharacters, totalKeystrokesRef.current);
+    setLiveWpm(calculateNetWpm(stats.totalCorrect, elapsed));
+    setLiveAcc(calculateAccuracy(stats.totalCorrect, totalKeys));
   };
 
   // Handle Space press
   const handleSpacePress = () => {
-    if (isCompleted || currentInput.length === 0) return;
+    if (isCompletedRef.current || currentInputRef.current.length === 0) return;
 
-    const currentWord = words[currentWordIndex];
+    const currentIdx = currentWordIndexRef.current;
+    const currentWord = wordsRef.current[currentIdx];
     if (!currentWord) return;
 
     // Strict mode check: cannot proceed if errors exist
@@ -330,7 +357,10 @@ export default function App() {
       return;
     }
 
-    // Mark current word as completed
+    // Space counts as a valid keystroke
+    totalKeystrokesRef.current += 1;
+
+    // Mark untyped letters in current word as missed/incorrect
     const updatedLetters = currentWord.letters.map(letter => {
       if (letter.state === 'untyped') {
         return { ...letter, state: 'incorrect' as const };
@@ -338,52 +368,64 @@ export default function App() {
       return letter;
     });
 
-    setWords(prevWords => {
-      const newWords = [...prevWords];
-      newWords[currentWordIndex] = {
-        ...currentWord,
-        letters: updatedLetters,
-        isCompleted: true,
-        hasMistake: updatedLetters.some(l => l.state === 'incorrect' || l.state === 'extra'),
-      };
-      return newWords;
-    });
+    const completedWord: WordItem = {
+      ...currentWord,
+      letters: updatedLetters,
+      isCompleted: true,
+      hasMistake: updatedLetters.some(l => l.state === 'incorrect' || l.state === 'extra'),
+    };
+
+    const newWords = [...wordsRef.current];
+    newWords[currentIdx] = completedWord;
+    wordsRef.current = newWords;
 
     playKeySound(settings.soundFeedback, settings.soundVolume, false);
 
     // Check if test completed (words or quote mode)
-    if (currentWordIndex >= words.length - 1) {
-      finishTest();
+    if (currentIdx >= wordsRef.current.length - 1) {
+      currentWordIndexRef.current = currentIdx + 1;
+      currentInputRef.current = '';
+      setWords(newWords);
+      setCurrentInput('');
+      finishTestRef.current();
       return;
     }
 
     // Move to next word
-    const nextIndex = currentWordIndex + 1;
-    setCurrentWordIndex(nextIndex);
-    setCurrentInput('');
+    const nextIndex = currentIdx + 1;
+    currentWordIndexRef.current = nextIndex;
+    currentInputRef.current = '';
 
     // If time mode and nearing end of word list, dynamically append more words
-    if (config.mode === 'time' && words.length - nextIndex <= 10) {
-      const extraRaw = generateWordsText(30, config.punctuation, config.numbers);
+    if (configRef.current.mode === 'time' && newWords.length - nextIndex <= 10) {
+      const extraRaw = generateWordsText(30, configRef.current.punctuation, configRef.current.numbers);
       const extraItems: WordItem[] = extraRaw.map((w, idx) => ({
-        id: words.length + idx,
+        id: newWords.length + idx,
         original: w,
         letters: w.split('').map(char => ({ char, state: 'untyped' as const })),
         typed: '',
         isCompleted: false,
         hasMistake: false,
       }));
-      setWords(prev => [...prev, ...extraItems]);
+      newWords.push(...extraItems);
+      wordsRef.current = newWords;
     }
+
+    setWords(newWords);
+    setCurrentWordIndex(nextIndex);
+    setCurrentInput('');
   };
 
   // Handle Backspace press
   const handleBackspacePress = (isCtrlOrAlt: boolean) => {
-    if (isCompleted) return;
+    if (isCompletedRef.current) return;
+
+    const currentInput = currentInputRef.current;
+    const currentIdx = currentWordIndexRef.current;
 
     if (currentInput.length > 0) {
       const newInput = isCtrlOrAlt ? '' : currentInput.slice(0, -1);
-      const currentWord = words[currentWordIndex];
+      const currentWord = wordsRef.current[currentIdx];
       if (!currentWord) return;
 
       const updatedLetters: LetterData[] = currentWord.original.split('').map((char, idx) => {
@@ -410,24 +452,37 @@ export default function App() {
         }
       }
 
-      setWords(prevWords => {
-        const newWords = [...prevWords];
-        newWords[currentWordIndex] = {
-          ...currentWord,
-          letters: updatedLetters,
-          typed: newInput,
-          hasMistake: updatedLetters.some(l => l.state === 'incorrect' || l.state === 'extra'),
-        };
-        return newWords;
-      });
+      const updatedWord: WordItem = {
+        ...currentWord,
+        letters: updatedLetters,
+        typed: newInput,
+        hasMistake: updatedLetters.some(l => l.state === 'incorrect' || l.state === 'extra'),
+      };
 
+      const newWords = [...wordsRef.current];
+      newWords[currentIdx] = updatedWord;
+      wordsRef.current = newWords;
+      currentInputRef.current = newInput;
+
+      setWords(newWords);
       setCurrentInput(newInput);
       playKeySound(settings.soundFeedback, settings.soundVolume, false);
-    } else if (currentWordIndex > 0 && !settings.strictMode) {
+
+      // Recalculate live metrics
+      const elapsed = startTimeRef.current
+        ? Math.max(1, (Date.now() - startTimeRef.current) / 1000)
+        : 1;
+      const stats = calculateCharacterStats(newWords, currentIdx);
+      const totalKeys = Math.max(stats.totalCharacters, totalKeystrokesRef.current);
+      setLiveWpm(calculateNetWpm(stats.totalCorrect, elapsed));
+      setLiveAcc(calculateAccuracy(stats.totalCorrect, totalKeys));
+    } else if (currentIdx > 0 && !settings.strictMode) {
       // Step back to previous word if not in strict mode
-      const prevWordIndex = currentWordIndex - 1;
-      const prevWord = words[prevWordIndex];
+      const prevWordIndex = currentIdx - 1;
+      const prevWord = wordsRef.current[prevWordIndex];
       if (prevWord) {
+        currentWordIndexRef.current = prevWordIndex;
+        currentInputRef.current = prevWord.typed;
         setCurrentWordIndex(prevWordIndex);
         setCurrentInput(prevWord.typed);
         playKeySound(settings.soundFeedback, settings.soundVolume, false);
