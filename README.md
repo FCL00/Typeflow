@@ -1,4 +1,4 @@
-# Typeflow — Typing Speed Test
+# Typeflow
 
 A minimalist, typing speed test application built to help users improve their typing speed, accuracy, and consistency. Featuring a distraction-free interface, customizable themes, real-time typing statistics, and a keyboard-focused experience.
 
