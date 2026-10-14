@@ -14,9 +14,12 @@
     --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   }
 
-  body {
+  html,
+  body,
+  #root {
     background-color: var(--bg-color);
     color: var(--text-color);
+    min-height: 100%;
     font-family: var(--font-sans);
     transition: background-color 0.2s ease, color 0.2s ease;
   }

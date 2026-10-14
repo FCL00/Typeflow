@@ -71,7 +71,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   className={`p-3 rounded-lg border text-left transition-all relative ${
                     isSelected
                       ? 'border-[var(--main-color)] ring-1 ring-[var(--main-color)] scale-[1.02]'
-                      : 'border-white/10 hover:border-white/20'
+                      : 'border-[var(--sub-color)]/25 hover:border-[var(--sub-color)]/50'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-2">

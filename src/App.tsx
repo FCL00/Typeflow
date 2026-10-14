@@ -477,7 +477,7 @@ export default function App() {
   }, [activeView]);
 
   return (
-    <div className="min-h-screen flex flex-col justify-between selection:bg-[var(--main-color)] selection:text-[var(--bg-color)]">
+    <div className="min-h-screen bg-[var(--bg-color)] text-[var(--text-color)] flex flex-col justify-between selection:bg-[var(--main-color)] selection:text-[var(--bg-color)] transition-colors duration-200">
       {/* Header */}
       <Header
         currentTheme={currentTheme}

@@ -97,6 +97,18 @@ export const THEMES: ThemeColors[] = [
     error: '#dc2626',
     errorExtra: '#991b1b',
   },
+  {
+    id: 'light',
+    name: 'Light',
+    bg: '#f8fafc',
+    main: '#0284c7',
+    caret: '#0284c7',
+    sub: '#64748b',
+    subAlt: '#e2e8f0',
+    text: '#0f172a',
+    error: '#ef4444',
+    errorExtra: '#991b1b',
+  },
 ];
 
 export const DEFAULT_THEME = THEMES[0];
@@ -111,4 +123,11 @@ export function applyTheme(theme: ThemeColors) {
   root.style.setProperty('--text-color', theme.text);
   root.style.setProperty('--error-color', theme.error);
   root.style.setProperty('--error-extra-color', theme.errorExtra);
+
+  root.style.backgroundColor = theme.bg;
+  root.style.color = theme.text;
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.style.backgroundColor = theme.bg;
+    document.body.style.color = theme.text;
+  }
 }

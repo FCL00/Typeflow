@@ -16,7 +16,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeView,
   onNavigate,
 }) => {
-  const isLight = currentTheme.id === 'paper-light';
+  const isLight = currentTheme.id === 'paper-light' || currentTheme.id === 'light';
 
   const toggleQuickTheme = () => {
     if (isLight) {
