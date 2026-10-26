@@ -23,6 +23,10 @@
     font-family: var(--font-sans);
     transition: background-color 0.2s ease, color 0.2s ease;
   }
+
+  button, a {
+    @apply cursor-pointer;
+  }
 }
 
 /* Caret blinking keyframes */
