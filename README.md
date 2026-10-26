@@ -16,8 +16,6 @@ A minimalist, high-performance typing speed test application built to help users
   <img src="./public/typeflow.png" alt="Typeflow Preview" width="100%" />
 </p>
 
----
-
 ## ⚡ Features
 
 - **Typing Speed Test** — Accurately measure typing speed in words per minute (WPM), Raw WPM, accuracy percentage, and typing consistency.
@@ -35,8 +33,6 @@ A minimalist, high-performance typing speed test application built to help users
 - **Personal Statistics & History** — View average WPM, best WPM, total tests completed, time typed, and individual test records stored in Local Storage.
 - **Keyboard-Focused Experience** — Restart immediately with <kbd>Tab</kbd> + <kbd>Enter</kbd> or <kbd>Esc</kbd>.
 - **Clean Architecture** — Fully modular state management using React Context API (`AppProviders`, `SettingsContext`, `TestHistoryContext`, `AppNavigationContext`, `TypingTestContext`).
-
----
 
 ## 🚀 Getting Started
 
